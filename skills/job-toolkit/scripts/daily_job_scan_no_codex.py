@@ -70,6 +70,16 @@ def _run(command: list[str], *, timeout: int, log_stem: Path) -> subprocess.Comp
     return proc
 
 
+def _run_advisory(command: list[str], *, timeout: int, log_stem: Path, name: str) -> tuple[subprocess.CompletedProcess[str] | None, str | None]:
+    try:
+        proc = _run(command, timeout=timeout, log_stem=log_stem)
+    except subprocess.TimeoutExpired:
+        return None, f"{name} timeout after {timeout} seconds"
+    if proc.returncode != 0:
+        return proc, f"{name} exit {proc.returncode}"
+    return proc, None
+
+
 def _latest_listing() -> Path:
     files = sorted(LISTINGS.glob("20??-??-??.json"), key=lambda path: path.name)
     if not files:
@@ -146,7 +156,8 @@ def run(*, reuse_latest: bool, skip_agy: bool, limit: int) -> str:
     run_date = str(payload.get("date") or listing_path.stem)
 
     extraction_output = _fresh_file(ROUTING_ROOT / f"openrouter-jd-extraction-shadow-{run_date}.json")
-    extraction = _run(
+    advisory_failures: list[str] = []
+    extraction, extraction_failure = _run_advisory(
         [
             str(JOB_PYTHON),
             str(SCRIPTS / "openrouter_jd_extraction_shadow.py"),
@@ -161,7 +172,10 @@ def run(*, reuse_latest: bool, skip_agy: bool, limit: int) -> str:
         ],
         timeout=720,
         log_stem=log_dir / "02-extraction-shadow",
+        name="OpenRouter JD extraction shadow",
     )
+    if extraction_failure:
+        advisory_failures.append(extraction_failure)
 
     digest = _run(
         [
@@ -182,7 +196,7 @@ def run(*, reuse_latest: bool, skip_agy: bool, limit: int) -> str:
     routing_dir: Path | None = None
     if not skip_agy:
         routing_dir = _fresh_dir(ROUTING_ROOT / f"{run_date}-no-codex-shadow")
-        routing = _run(
+        routing, routing_failure = _run_advisory(
             [
                 str(JOB_PYTHON),
                 str(SCRIPTS / "daily_routing_rerun.py"),
@@ -201,8 +215,11 @@ def run(*, reuse_latest: bool, skip_agy: bool, limit: int) -> str:
             ],
             timeout=900,
             log_stem=log_dir / "04-jev-agy-shadow",
+            name="Jev/AGY routing shadow",
         )
-        if routing.returncode != 0:
+        if routing_failure:
+            advisory_failures.append(routing_failure)
+        if routing is None or routing.returncode != 0:
             routing_dir = None
 
     lines = [digest.stdout.strip()]
