@@ -77,14 +77,14 @@ class ShadowResilienceTests(unittest.TestCase):
 
         return runner
 
-    def run(self, remote, local=None, **kwargs):
+    def call(self, remote, local=None, **kwargs):
         return shadow.run_shadow(
             {"listings": [{}]}, run_date="2026-10-16", limit=20, batch_size=8, timeout=180,
             remote_runner=remote, local_runner=local or self.local(), clock=self.clock, **kwargs,
         )
 
     def test_default_behaviour_is_complete_and_not_partial(self):
-        report = self.run(self.remote(["ok"]), deadline_seconds=None)
+        report = self.call(self.remote(["ok"]), deadline_seconds=None)
         self.assertEqual(report["accepted_case_count"], 20)
         self.assertTrue(report["all_batches_accepted"])
         self.assertFalse(report["partial"])
@@ -92,7 +92,7 @@ class ShadowResilienceTests(unittest.TestCase):
         self.assertEqual(len(self.remote_calls), 3)
 
     def test_deadline_stops_work_and_marks_report_partial(self):
-        report = self.run(self.remote(["fail"], step=100), deadline_seconds=250, breaker_threshold=999)
+        report = self.call(self.remote(["fail"], step=100), deadline_seconds=250, breaker_threshold=999)
         self.assertTrue(report["partial"])
         self.assertEqual(report["stop_reason"], "deadline_exceeded")
         self.assertFalse(report["all_batches_accepted"])
@@ -102,12 +102,12 @@ class ShadowResilienceTests(unittest.TestCase):
         self.assertIn("deadline_exceeded", json.dumps(report["batches"]))
 
     def test_each_call_timeout_is_capped_by_remaining_deadline(self):
-        self.run(self.remote(["ok"], step=10), deadline_seconds=50)
+        self.call(self.remote(["ok"], step=10), deadline_seconds=50)
         self.assertLessEqual(self.remote_calls[0]["timeout"], 50)
         self.assertLessEqual(self.remote_calls[1]["timeout"], 40)
 
     def test_breaker_opens_after_consecutive_remote_failures_and_local_still_runs(self):
-        report = self.run(self.remote(["fail"], step=1), breaker_threshold=3)
+        report = self.call(self.remote(["fail"], step=1), breaker_threshold=3)
         self.assertEqual(len(self.remote_calls), 3)
         self.assertEqual(report["breakers"]["openrouter"], "open")
         self.assertIn("breaker_open", json.dumps(report["batches"]))
@@ -116,7 +116,7 @@ class ShadowResilienceTests(unittest.TestCase):
 
     def test_success_resets_consecutive_failure_count(self):
         self.cases = make_cases(16)
-        report = self.run(self.remote(["fail", "fail", "ok", "fail", "fail", "ok"], step=1), breaker_threshold=3)
+        report = self.call(self.remote(["fail", "fail", "ok", "fail", "fail", "ok"], step=1), breaker_threshold=3)
         self.assertEqual(len(self.remote_calls), 6)
         self.assertEqual(report["breakers"]["openrouter"], "closed")
         self.assertEqual(report["accepted_case_count"], 16)
@@ -124,12 +124,12 @@ class ShadowResilienceTests(unittest.TestCase):
     def test_checkpoint_resume_reruns_only_unfinished_batches(self):
         with tempfile.TemporaryDirectory() as tmp:
             checkpoint = Path(tmp) / "shadow.checkpoint.jsonl"
-            first = self.run(self.remote(["ok"], step=100), deadline_seconds=100, checkpoint_path=checkpoint)
+            first = self.call(self.remote(["ok"], step=100), deadline_seconds=100, checkpoint_path=checkpoint)
             self.assertTrue(first["partial"])
             self.assertEqual(first["accepted_case_count"], 8)
             self.assertTrue(checkpoint.is_file())
             self.remote_calls.clear()
-            second = self.run(self.remote(["ok"], step=1), checkpoint_path=checkpoint)
+            second = self.call(self.remote(["ok"], step=1), checkpoint_path=checkpoint)
             self.assertEqual(len(self.remote_calls), 2)
             self.assertEqual(second["accepted_case_count"], 20)
             self.assertEqual(second["reused_batch_count"], 1)
@@ -139,10 +139,10 @@ class ShadowResilienceTests(unittest.TestCase):
     def test_checkpoint_not_reused_when_description_hash_changed(self):
         with tempfile.TemporaryDirectory() as tmp:
             checkpoint = Path(tmp) / "shadow.checkpoint.jsonl"
-            self.run(self.remote(["ok"], step=1), checkpoint_path=checkpoint)
+            self.call(self.remote(["ok"], step=1), checkpoint_path=checkpoint)
             self.remote_calls.clear()
             self.cases = make_cases(suffix="-changed")
-            report = self.run(self.remote(["ok"], step=1), checkpoint_path=checkpoint)
+            report = self.call(self.remote(["ok"], step=1), checkpoint_path=checkpoint)
             self.assertEqual(len(self.remote_calls), 3)
             self.assertEqual(report["reused_batch_count"], 0)
 
@@ -150,7 +150,7 @@ class ShadowResilienceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             checkpoint = Path(tmp) / "shadow.checkpoint.jsonl"
             checkpoint.write_text('{"v": 1, "batch_key": "x"\nnot json at all\n', encoding="utf-8")
-            report = self.run(self.remote(["ok"], step=1), checkpoint_path=checkpoint)
+            report = self.call(self.remote(["ok"], step=1), checkpoint_path=checkpoint)
             self.assertEqual(report["accepted_case_count"], 20)
             self.assertEqual(report["reused_batch_count"], 0)
 
