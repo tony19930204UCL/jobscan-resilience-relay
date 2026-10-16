@@ -1,0 +1,41 @@
+{
+  "schema_version": 2,
+  "repository": "tony19930204UCL/jobscan-resilience-relay",
+  "pr_number": 1,
+  "branch": "eng/m1-daily-scan-resilience",
+  "task_id": "jobscan-m1-20261016",
+  "instruction_id": "initial-001",
+  "status": "READY_FOR_REVIEW",
+  "source_head_sha": "4a32c98fd95380517f3dbaa0b4c5adf69b1c7196",
+  "summary": "Implemented timeout logging for all subprocess stages, fail-closed required stages, and nonblocking advisory timeout/nonzero reporting with degraded notice in delivered and reviewed digest. Independent acceptance pending.",
+  "changed_files": [
+    "skills/job-toolkit/scripts/daily_job_scan_no_codex.py",
+    "docs/engineering/HANDOFF.json"
+  ],
+  "tests": [
+    {
+      "command": "python -m pytest -q -o addopts= tests",
+      "result": "NOT_RUN",
+      "evidence": "Per task instruction; owner runs acceptance tests."
+    },
+    {
+      "command": "python -m py_compile skills/job-toolkit/scripts/daily_job_scan_no_codex.py",
+      "result": "NOT_RUN",
+      "evidence": "Per task instruction; no local checkout."
+    }
+  ],
+  "remaining_work": [
+    {
+      "item": "Main CIO to run eight resilience tests, full test suite and py_compile at exact PR HEAD.",
+      "status": "ACTIONABLE_NOW",
+      "owner": "Main CIO"
+    }
+  ],
+  "next_step_reminder": {
+    "to": "Main CIO",
+    "verify_now": "Run eight resilience tests, full suite and py_compile against PR #1 exact HEAD; inspect logs and degraded notice.",
+    "if_pass": "Accept source for review under normal PR process; no automatic merge.",
+    "if_fail": "Return exact failing assertion and HEAD for bounded correction.",
+    "blockers": []
+  }
+}
