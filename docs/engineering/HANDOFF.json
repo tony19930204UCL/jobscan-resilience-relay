@@ -4,19 +4,19 @@
   "pr_number": 1,
   "branch": "eng/m1-daily-scan-resilience",
   "task_id": "jobscan-m1-20261016",
-  "instruction_id": "repair-003",
+  "instruction_id": "repair-004",
   "status": "READY_FOR_REVIEW",
-  "source_head_sha": "41e620769753ce47415381d9b52f93888f449f60",
-  "summary": "Repaired Python 3.11 incompatible nested-quote f-string by extracting exit text to a variable; corrected stage JSON trailing newline escape to match c1d3823. Committed source read-back confirmed; independent Main acceptance pending.",
+  "source_head_sha": "9f84b57920c80c3f089c7d8a8c29be95da99db51",
+  "summary": "Added _run_advisory to catch logged timeouts and report nonzero advisory exits. Extraction and routing are advisory; scan and digest remain required and fail closed. Initialized advisory_failures for skip paths and preserved conditional DEGRADED output. Source committed and read back; independent acceptance pending.",
   "changed_files": [
     "skills/job-toolkit/scripts/daily_job_scan_no_codex.py",
     "docs/engineering/HANDOFF.json"
   ],
   "tests": [
     {
-      "command": "GitHub connector committed source read-back",
-      "result": "PASS",
-      "evidence": "Commit 41e620769753ce47415381d9b52f93888f449f60: extraction_exit assigned separately; f-string uses variable; json.dumps suffix is a single-backslash newline escape."
+      "command": "GitHub connector fetch_file at source commit",
+      "result": "READ_BACK",
+      "evidence": "Confirmed _run_advisory, two advisory calls, initialized advisory_failures, routing None handling, required digest _run, scan_note initialization."
     },
     {
       "command": "python3.11 -m py_compile skills/job-toolkit/scripts/daily_job_scan_no_codex.py",
@@ -24,23 +24,23 @@
       "evidence": "Not executed."
     },
     {
-      "command": "python -m pytest -q -o addopts= tests",
+      "command": "python -m pytest -q tests/test_daily_scan_resilience.py",
       "result": "NOT_RUN",
-      "evidence": "Not executed."
+      "evidence": "Eight tests inspected and traced against source; not executed."
     }
   ],
   "remaining_work": [
     {
-      "item": "Main CIO independently compile under Python 3.11 and run tests at exact PR HEAD.",
+      "item": "Main CIO independently execute Python 3.11 compile and eight acceptance tests at exact PR HEAD.",
       "status": "ACTIONABLE_NOW",
       "owner": "Main CIO"
     }
   ],
   "next_step_reminder": {
     "to": "Main CIO",
-    "verify_now": "Check source and execute Python 3.11 compilation plus tests at exact PR HEAD.",
-    "if_pass": "Accept source review without automatic merge.",
-    "if_fail": "Return exact failing output and HEAD.",
+    "verify_now": "Verify source commit and run Python 3.11 compile plus eight acceptance tests at exact PR HEAD.",
+    "if_pass": "Accept for review; do not automatically merge.",
+    "if_fail": "Return exact failing test evidence and commit SHA.",
     "blockers": []
   }
 }
