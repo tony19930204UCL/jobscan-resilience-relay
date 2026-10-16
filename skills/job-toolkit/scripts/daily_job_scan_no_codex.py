@@ -25,35 +25,48 @@ LOG_ROOT = WORKSPACE / "data/jev/no_codex_daily_scan"
 JOB_PYTHON = Path(os.environ.get("JOBHUNTER_PYTHON", sys.executable))
 
 
+def _decode_partial(value: bytes | str | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
 def _run(command: list[str], *, timeout: int, log_stem: Path) -> subprocess.CompletedProcess[str]:
     started = datetime.now().astimezone().isoformat()
-    proc = subprocess.run(
-        command,
-        cwd=WORKSPACE,
-        text=True,
-        capture_output=True,
-        timeout=timeout,
-        check=False,
-    )
-    log_stem.parent.mkdir(parents=True, exist_ok=True)
-    log_stem.with_suffix(".stdout.txt").write_text(proc.stdout, encoding="utf-8")
-    log_stem.with_suffix(".stderr.txt").write_text(proc.stderr, encoding="utf-8")
-    log_stem.with_suffix(".json").write_text(
-        json.dumps(
-            {
-                "started_at": started,
-                "finished_at": datetime.now().astimezone().isoformat(),
-                "command": command,
-                "returncode": proc.returncode,
-                "stdout_bytes": len(proc.stdout.encode("utf-8")),
-                "stderr_bytes": len(proc.stderr.encode("utf-8")),
-            },
-            ensure_ascii=False,
-            indent=2,
+    timed_out = False
+    try:
+        proc = subprocess.run(
+            command, cwd=WORKSPACE, text=True, capture_output=True,
+            timeout=timeout, check=False,
         )
-        + "\n",
+        stdout = _decode_partial(proc.stdout)
+        stderr = _decode_partial(proc.stderr)
+    except subprocess.TimeoutExpired as exc:
+        timed_out = True
+        stdout = _decode_partial(exc.stdout)
+        stderr = _decode_partial(exc.stderr)
+        proc = subprocess.CompletedProcess(command, None, stdout=stdout, stderr=stderr)
+
+    log_stem.parent.mkdir(parents=True, exist_ok=True)
+    log_stem.with_suffix(".stdout.txt").write_text(stdout, encoding="utf-8")
+    log_stem.with_suffix(".stderr.txt").write_text(stderr, encoding="utf-8")
+    log_stem.with_suffix(".json").write_text(
+        json.dumps({
+            "started_at": started,
+            "finished_at": datetime.now().astimezone().isoformat(),
+            "command": command,
+            "returncode": proc.returncode,
+            "status": "timeout" if timed_out else ("ok" if proc.returncode == 0 else "failed"),
+            "timeout_seconds": timeout if timed_out else None,
+            "stdout_bytes": len(stdout.encode("utf-8")),
+            "stderr_bytes": len(stderr.encode("utf-8")),
+        }, ensure_ascii=False, indent=2) + "\\n",
         encoding="utf-8",
     )
+    if timed_out:
+        raise subprocess.TimeoutExpired(command, timeout, output=stdout, stderr=stderr)
     return proc
 
 
@@ -192,9 +205,9 @@ def run(*, reuse_latest: bool, skip_agy: bool, limit: int) -> str:
         if routing.returncode != 0:
             routing_dir = None
 
-    lines = [digest.stdout.strip(), "", "## Routing health"]
+    lines = [digest.stdout.strip()]\n    if advisory_failures:\n        lines.extend(["", "## DEGRADED — advisory stage failures", *[f"- {item}" for item in advisory_failures]])\n    lines.extend(["", "## Routing health"])
     lines.extend(_routing_health(routing_dir))
-    lines.append(f"- OpenRouter JD extraction shadow exit: {extraction.returncode}; artifact: `{extraction_output}`")
+    lines.append(f"- OpenRouter JD extraction shadow exit: {("timeout" if extraction is None else extraction.returncode)}; artifact: `{extraction_output}`")
     if scan_note:
         lines.append(f"- {scan_note}")
     lines.extend(
