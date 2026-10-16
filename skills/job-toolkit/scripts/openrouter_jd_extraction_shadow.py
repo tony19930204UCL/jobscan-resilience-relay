@@ -352,6 +352,10 @@ def run_shadow(
     timeout: float,
     remote_runner: Callable[..., Mapping[str, Any]] | None = None,
     local_runner: Callable[..., Mapping[str, Any]] | None = None,
+    deadline_seconds: float | None = None,
+    breaker_threshold: int = 3,
+    checkpoint_path: Path | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
     listings = payload.get("listings")
     if not isinstance(listings, list):
@@ -360,10 +364,50 @@ def run_shadow(
     schema = model_schema()
     remote_runner = remote_runner or call_openrouter
     local_runner = local_runner or call_local_ollama
+    started_at = clock()
+    failures = {"openrouter": 0, "ollama": 0}
+    breaker_threshold = max(1, breaker_threshold)
+    partial = False
+    stop_reason = None
+    reused_batch_count = 0
+    checkpoints: dict[str, dict[str, Any]] = {}
+    if checkpoint_path is not None and checkpoint_path.is_file():
+        for line in checkpoint_path.read_text(encoding="utf-8").splitlines():
+            try:
+                record = json.loads(line)
+                if (isinstance(record, dict) and record.get("v") == 1
+                        and isinstance(record.get("batch_key"), str)
+                        and isinstance(record.get("batch"), dict)
+                        and record["batch"].get("accepted") is True
+                        and isinstance(record.get("items"), list)):
+                    checkpoints[record["batch_key"]] = record
+            except (ValueError, TypeError, KeyError):
+                continue
     batches: list[dict[str, Any]] = []
     accepted_items: list[dict[str, Any]] = []
     for start in range(0, len(cases), batch_size):
         batch = cases[start : start + batch_size]
+        batch_key = sha256_text(stable_json(sorted(
+            str(case["case_id"]) + ":" + str(case["description_sha256"]) for case in batch
+        )))
+        saved = checkpoints.get(batch_key)
+        if saved is not None and saved["batch"].get("case_ids") == [case["case_id"] for case in batch] and len(saved["items"]) == len(batch):
+            batches.append({**saved["batch"], "batch_index": len(batches) + 1})
+            accepted_items.extend(saved["items"])
+            reused_batch_count += 1
+            continue
+        if deadline_seconds is not None and clock() - started_at >= deadline_seconds:
+            partial = True
+            stop_reason = "deadline_exceeded"
+            batches.append({
+                "batch_index": len(batches) + 1,
+                "case_ids": [case["case_id"] for case in batch],
+                "accepted": False,
+                "unresolved_case_ids": [case["case_id"] for case in batch],
+                "attempts": [{"error": "deadline_exceeded", "skipped": True}],
+            })
+            continue
+        batch_items_start = len(accepted_items)
         attempts: list[dict[str, Any]] = []
         accepted_by_id: dict[str, dict[str, Any]] = {}
         model_meta_by_id: dict[str, dict[str, Any]] = {}
@@ -377,13 +421,25 @@ def run_shadow(
         ):
             if not remaining:
                 break
+            route = "openrouter" if kind.startswith("openrouter") else "ollama"
+            elapsed = clock() - started_at
+            if deadline_seconds is not None and elapsed >= deadline_seconds:
+                partial = True
+                stop_reason = "deadline_exceeded"
+                attempts.append({"kind": kind, "requested_model": model, "skipped": True, "error": "deadline_exceeded"})
+                break
+            if failures[route] >= breaker_threshold:
+                attempts.append({"kind": kind, "requested_model": model, "skipped": True, "error": "breaker_open"})
+                continue
+            call_timeout = timeout if deadline_seconds is None else min(timeout, deadline_seconds - elapsed)
             messages = build_messages(remaining, schema)
             attempt_case_ids = [case["case_id"] for case in remaining]
             try:
                 if kind.startswith("openrouter"):
-                    receipt = dict(remote_runner(model, messages, timeout=timeout))
+                    receipt = dict(remote_runner(model, messages, timeout=call_timeout))
                 else:
-                    receipt = dict(local_runner(model, messages, schema, timeout=timeout))
+                    receipt = dict(local_runner(model, messages, schema, timeout=call_timeout))
+                failures[route] = 0
                 validation = validate_output(receipt.pop("parsed"), remaining)
                 attempts.append({
                     "kind": kind,
@@ -401,6 +457,7 @@ def run_shadow(
                         }
                 remaining = [case for case in remaining if case["case_id"] not in accepted_by_id]
             except Exception as exc:
+                failures[route] += 1
                 attempts.append({
                     "kind": kind,
                     "requested_model": model,
@@ -433,6 +490,11 @@ def run_shadow(
             "unresolved_case_ids": [case["case_id"] for case in remaining],
             "attempts": attempts,
         })
+        if batch_accepted and checkpoint_path is not None:
+            checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+            record = {"v": 1, "batch_key": batch_key, "batch": batches[-1], "items": accepted_items[batch_items_start:]}
+            with checkpoint_path.open("a", encoding="utf-8") as handle:
+                handle.write(stable_json(record) + "\n")
     disagreements = [
         item for item in accepted_items
         if item.get("jd_complete") is not item.get("deterministic_complete")
@@ -443,7 +505,11 @@ def run_shadow(
         "source_listing_count": len(listings),
         "selected_case_count": len(cases),
         "accepted_case_count": len(accepted_items),
-        "all_batches_accepted": len(accepted_items) == len(cases),
+        "all_batches_accepted": not partial and len(accepted_items) == len(cases),
+        "partial": partial,
+        "stop_reason": stop_reason,
+        "breakers": {route: "open" if count >= breaker_threshold else "closed" for route, count in failures.items()},
+        "reused_batch_count": reused_batch_count,
         "primary_model": PRIMARY_MODEL,
         "remote_fallback_model": REMOTE_FALLBACK_MODEL,
         "remote_tertiary_model": REMOTE_TERTIARY_MODEL,
@@ -483,6 +549,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--timeout", type=float, default=180)
+    parser.add_argument("--deadline", type=float, default=540)
+    parser.add_argument("--breaker-threshold", type=int, default=3)
+    parser.add_argument("--checkpoint", type=Path, default=None)
     args = parser.parse_args(argv)
     load_env()
     payload = json.loads(args.input.read_text(encoding="utf-8"))
@@ -492,6 +561,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         limit=max(1, args.limit),
         batch_size=max(1, args.batch_size),
         timeout=args.timeout,
+        deadline_seconds=args.deadline,
+        breaker_threshold=args.breaker_threshold,
+        checkpoint_path=args.checkpoint,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
