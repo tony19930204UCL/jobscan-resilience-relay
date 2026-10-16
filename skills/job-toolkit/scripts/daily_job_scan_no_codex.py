@@ -205,7 +205,10 @@ def run(*, reuse_latest: bool, skip_agy: bool, limit: int) -> str:
         if routing.returncode != 0:
             routing_dir = None
 
-    lines = [digest.stdout.strip()]\n    if advisory_failures:\n        lines.extend(["", "## DEGRADED — advisory stage failures", *[f"- {item}" for item in advisory_failures]])\n    lines.extend(["", "## Routing health"])
+    lines = [digest.stdout.strip()]
+    if advisory_failures:
+        lines.extend(["", "## DEGRADED — advisory stage failures", *[f"- {item}" for item in advisory_failures]])
+    lines.extend(["", "## Routing health"])
     lines.extend(_routing_health(routing_dir))
     lines.append(f"- OpenRouter JD extraction shadow exit: {("timeout" if extraction is None else extraction.returncode)}; artifact: `{extraction_output}`")
     if scan_note:
