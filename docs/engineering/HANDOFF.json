@@ -4,22 +4,22 @@
   "pr_number": 1,
   "branch": "eng/m1-daily-scan-resilience",
   "task_id": "jobscan-m1-20261016",
-  "instruction_id": "repair-002",
+  "instruction_id": "repair-003",
   "status": "READY_FOR_REVIEW",
-  "source_head_sha": "971e64c1e8a009c6b22a619fd54a1aa120bf8d31",
-  "summary": "Fixed malformed physical newlines in digest routing block, preserving behavior; read-back confirmed. Main acceptance pending.",
+  "source_head_sha": "41e620769753ce47415381d9b52f93888f449f60",
+  "summary": "Repaired Python 3.11 incompatible nested-quote f-string by extracting exit text to a variable; corrected stage JSON trailing newline escape to match c1d3823. Committed source read-back confirmed; independent Main acceptance pending.",
   "changed_files": [
     "skills/job-toolkit/scripts/daily_job_scan_no_codex.py",
     "docs/engineering/HANDOFF.json"
   ],
   "tests": [
     {
-      "command": "GitHub connector source read-back",
+      "command": "GitHub connector committed source read-back",
       "result": "PASS",
-      "evidence": "Correct physical newlines observed in committed digest block."
+      "evidence": "Commit 41e620769753ce47415381d9b52f93888f449f60: extraction_exit assigned separately; f-string uses variable; json.dumps suffix is a single-backslash newline escape."
     },
     {
-      "command": "python -m py_compile skills/job-toolkit/scripts/daily_job_scan_no_codex.py",
+      "command": "python3.11 -m py_compile skills/job-toolkit/scripts/daily_job_scan_no_codex.py",
       "result": "NOT_RUN",
       "evidence": "Not executed."
     },
@@ -31,16 +31,16 @@
   ],
   "remaining_work": [
     {
-      "item": "Main CIO to execute py_compile and tests at exact PR HEAD.",
+      "item": "Main CIO independently compile under Python 3.11 and run tests at exact PR HEAD.",
       "status": "ACTIONABLE_NOW",
       "owner": "Main CIO"
     }
   ],
   "next_step_reminder": {
     "to": "Main CIO",
-    "verify_now": "Execute py_compile and tests at exact PR HEAD.",
-    "if_pass": "Review and accept without automatic merge.",
-    "if_fail": "Return exact failure evidence and HEAD.",
+    "verify_now": "Check source and execute Python 3.11 compilation plus tests at exact PR HEAD.",
+    "if_pass": "Accept source review without automatic merge.",
+    "if_fail": "Return exact failing output and HEAD.",
     "blockers": []
   }
 }
