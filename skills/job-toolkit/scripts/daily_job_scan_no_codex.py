@@ -62,7 +62,7 @@ def _run(command: list[str], *, timeout: int, log_stem: Path) -> subprocess.Comp
             "timeout_seconds": timeout if timed_out else None,
             "stdout_bytes": len(stdout.encode("utf-8")),
             "stderr_bytes": len(stderr.encode("utf-8")),
-        }, ensure_ascii=False, indent=2) + "\\n",
+        }, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
     if timed_out:
@@ -210,7 +210,8 @@ def run(*, reuse_latest: bool, skip_agy: bool, limit: int) -> str:
         lines.extend(["", "## DEGRADED — advisory stage failures", *[f"- {item}" for item in advisory_failures]])
     lines.extend(["", "## Routing health"])
     lines.extend(_routing_health(routing_dir))
-    lines.append(f"- OpenRouter JD extraction shadow exit: {("timeout" if extraction is None else extraction.returncode)}; artifact: `{extraction_output}`")
+    extraction_exit = "timeout" if extraction is None else extraction.returncode
+    lines.append(f"- OpenRouter JD extraction shadow exit: {extraction_exit}; artifact: `{extraction_output}`")
     if scan_note:
         lines.append(f"- {scan_note}")
     lines.extend(
